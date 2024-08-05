@@ -5,8 +5,17 @@ import Client, {
   SubscribeRequestFilterAccountsFilter,
 } from "@triton-one/yellowstone-grpc";
 
+import bs58 from "bs58";
+import { UiTokenAmount } from "@triton-one/yellowstone-grpc/dist/grpc/solana-storage";
+
+const PING_INTERVAL_MS = 30000;
+const WALLET_ADRESSES = [
+  "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+];
+
 async function main() {
-  const args = parseCommandLineArgs();
+  const args = parseCommandLineArgs() as any;
 
   // Open connection.
   const client = new Client(args.endpoint, args.xToken, {
@@ -62,13 +71,13 @@ function parseCommitmentLevel(commitment: string | undefined) {
   return CommitmentLevel[typedCommitment];
 }
 
-async function subscribeCommand(client, args) {
+async function subscribeCommand(client: any, args: any) {
   // Subscribe for events
   const stream = await client.subscribe();
 
   // Create `error` / `end` handler
   const streamClosed = new Promise<void>((resolve, reject) => {
-    stream.on("error", (error) => {
+    stream.on("error", (error: any) => {
       reject(error);
       stream.end();
     });
@@ -82,14 +91,231 @@ async function subscribeCommand(client, args) {
 
   // Handle updates
   stream.on("data", (data) => {
-    console.log("data", data);
+    const preBalances = [];
+    const postBalances = [];
+    const finalBalances = [];
+    const sender = [];
+    const receiver = [];
+
+    if (data.transaction) {
+      console.log(
+        "signature",
+        bs58.encode(data.transaction.transaction.signature)
+      );
+
+      if (
+        data.transaction.transaction.meta.preTokenBalances.length === 0 &&
+        data.transaction.transaction.meta.postTokenBalances.length === 0
+      ) {
+        console.log("sending or receiving SOL");
+
+        data.transaction.transaction.transaction.message.accountKeys.forEach(
+          (key, i) => {
+            finalBalances.push({
+              mint: "So11111111111111111111111111111111111111112",
+              owner: bs58.encode(key),
+              uiTokenAmount: {
+                uiAmount:
+                  (Number(data.transaction.transaction.meta.postBalances[i]) -
+                    Number(data.transaction.transaction.meta.preBalances[i])) /
+                  1e9,
+                decimals: 9,
+                amount: (
+                  Number(data.transaction.transaction.meta.postBalances[i]) -
+                  Number(data.transaction.transaction.meta.preBalances[i])
+                ).toString(),
+              },
+            });
+          }
+        );
+        finalBalances.forEach((item) => {
+          if (item.uiTokenAmount.uiAmount < 0) {
+            sender.push({
+              ...item,
+              uiTokenAmount: {
+                ...item.uiTokenAmount,
+                uiAmount:
+                  item.uiTokenAmount.uiAmount +
+                  Number(data.transaction.transaction.meta.fee) / 1e9,
+                amount: (
+                  Number(item.uiTokenAmount.amount) +
+                  Number(data.transaction.transaction.meta.fee)
+                ).toString(),
+              },
+            });
+          } else if (item.uiTokenAmount.uiAmount > 0) {
+            receiver.push(item);
+          }
+        });
+
+        console.log("sender info:", sender);
+        if (
+          sender.filter((item) => WALLET_ADRESSES.includes(item.owner))
+            .length === 0
+        ) {
+          console.log(
+            "receiver info:",
+            receiver.filter((item) => WALLET_ADRESSES.includes(item.owner))
+          );
+        } else {
+          console.log("receiver info", receiver);
+        }
+
+        return;
+      }
+
+      if (
+        data.transaction.transaction.meta.logMessages.includes(
+          "Program log: Instruction: Swap"
+        )
+      ) {
+        let signerWallet = bs58.encode(
+          data.transaction.transaction.transaction.message.accountKeys[0]
+        );
+
+        data.transaction.transaction.meta.preTokenBalances.forEach((item) => {
+          if (item.owner === signerWallet) {
+            preBalances.push(item);
+          }
+        });
+        data.transaction.transaction.meta.postTokenBalances.forEach((item) => {
+          if (item.owner === signerWallet) {
+            postBalances.push(item);
+          }
+        });
+        //if theres only 1 pre and 1 post balance, you must have swapped SOL and another token
+        if (preBalances.length + postBalances.length === 2) {
+          console.log("prebalances", preBalances);
+          console.log("postbalances", postBalances);
+
+          if (preBalances[0].mint === postBalances[0].mint) {
+            const solValueWithFee =
+              Number(data.transaction.transaction.meta.preBalances[0]) -
+              Number(data.transaction.transaction.meta.postBalances[0]);
+            const solAmountTransacted =
+              (solValueWithFee -
+                Number(data.transaction.transaction.meta.fee)) /
+              1e9;
+            console.log(
+              "users SOL amount remaining:",
+              Number(data.transaction.transaction.meta.postBalances[0]) / 1e9
+            );
+
+            let uiAmount =
+              postBalances[0].uiTokenAmount.uiAmount -
+              preBalances[0].uiTokenAmount.uiAmount;
+
+            let decimals = postBalances[0].uiTokenAmount.decimals;
+
+            let amount =
+              Number(postBalances[0].uiTokenAmount.amount) -
+              Number(preBalances[0].uiTokenAmount.amount);
+
+            if (uiAmount === 0) {
+              return;
+            }
+
+            const multiplier = 1 / uiAmount;
+            const currentPrice = solAmountTransacted * multiplier;
+
+            finalBalances.push({
+              mint: postBalances[0].mint,
+              owner: signerWallet,
+              type: amount > 0 ? "Buy" : "Sell",
+              uiTokenAmount: {
+                uiAmount: Math.abs(uiAmount),
+                decimals,
+                amount: Math.abs(amount).toString(),
+                price: currentPrice,
+              },
+            });
+          }
+          console.log("final balances", finalBalances);
+          return;
+        }
+      }
+
+      if (
+        !data.transaction.transaction.meta.logMessages.includes(
+          "Program log: Instruction: Swap"
+        )
+      ) {
+        if (
+          data.transaction.transaction.meta.preTokenBalances.length +
+            data.transaction.transaction.meta.postTokenBalances.length >
+          2
+        ) {
+          console.log("sending or receiving a token other than SOL");
+          data.transaction.transaction.meta.preTokenBalances.forEach((item) => {
+            preBalances.push(item);
+          });
+          data.transaction.transaction.meta.postTokenBalances.forEach(
+            (item) => {
+              postBalances.push(item);
+            }
+          );
+          postBalances.forEach((postBalance) => {
+            let preBalance = preBalances.find(
+              (item) =>
+                item.owner === postBalance.owner &&
+                item.mint === postBalance.mint
+            );
+            if (preBalance) {
+              finalBalances.push({
+                owner: postBalance.owner,
+                mint: postBalance.mint,
+                uiTokenAmount: {
+                  uiAmount:
+                    Number(postBalance.uiTokenAmount.uiAmount) -
+                    Number(preBalance.uiTokenAmount.uiAmount),
+                  decimals: postBalance.uiTokenAmount.decimals,
+                  amount: (
+                    Number(postBalance.uiTokenAmount.amount) -
+                    Number(preBalance.uiTokenAmount.amount)
+                  ).toString(),
+                },
+              });
+            }
+          });
+          finalBalances.forEach((item) => {
+            if (item.uiTokenAmount.uiAmount < 0) {
+              sender.push(item);
+            } else if (item.uiTokenAmount.uiAmount > 0) {
+              receiver.push(item);
+            }
+          });
+          // console.log("final", finalBalances);
+          console.log("sender info:", sender);
+          if (
+            sender.filter((item) => WALLET_ADRESSES.includes(item.owner))
+              .length === 0
+          ) {
+            console.log(
+              "receiver info:",
+              receiver.filter((item) => WALLET_ADRESSES.includes(item.owner))
+            );
+          } else {
+            console.log("receiver info", receiver);
+          }
+          return;
+        }
+      }
+    }
   });
 
   // Create subscribe request based on provided arguments.
   const request: SubscribeRequest = {
     accounts: {},
     slots: {},
-    transactions: {},
+    transactions: {
+      myTransactionFilter: {
+        accountInclude: WALLET_ADRESSES,
+        accountExclude: [],
+        accountRequired: [],
+        vote: false,
+        failed: false,
+      },
+    },
     transactionsStatus: {},
     entry: {},
     blocks: {},
@@ -199,7 +425,7 @@ async function subscribeCommand(client, args) {
 
   // Send subscribe request
   await new Promise<void>((resolve, reject) => {
-    stream.write(request, (err) => {
+    stream.write(request, (err: any) => {
       if (err === null || err === undefined) {
         resolve();
       } else {
@@ -210,6 +436,35 @@ async function subscribeCommand(client, args) {
     console.error(reason);
     throw reason;
   });
+
+  // await streamClosed;
+
+  const pingRequest: SubscribeRequest = {
+    ping: { id: 1 },
+    // Required, but unused arguments
+    accounts: {},
+    accountsDataSlice: [],
+    transactions: {},
+    transactionsStatus: {},
+    blocks: {},
+    blocksMeta: {},
+    entry: {},
+    slots: {},
+  };
+  setInterval(async () => {
+    await new Promise<void>((resolve, reject) => {
+      stream.write(pingRequest, (err) => {
+        if (err === null || err === undefined) {
+          resolve();
+        } else {
+          reject(err);
+        }
+      });
+    }).catch((reason) => {
+      console.error(reason);
+      throw reason;
+    });
+  }, PING_INTERVAL_MS);
 
   await streamClosed;
 }
@@ -240,7 +495,7 @@ function parseCommandLineArgs() {
     .command(
       "is-blockhash-valid",
       "check the validity of a given block hash",
-      (yargs) => {
+      (yargs: any) => {
         return yargs.options({
           blockhash: {
             type: "string",
@@ -249,7 +504,7 @@ function parseCommandLineArgs() {
         });
       }
     )
-    .command("subscribe", "subscribe to events", (yargs) => {
+    .command("subscribe", "subscribe to events", (yargs: any) => {
       return yargs.options({
         accounts: {
           default: false,
