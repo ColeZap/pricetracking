@@ -9,10 +9,7 @@ import bs58 from "bs58";
 import { UiTokenAmount } from "@triton-one/yellowstone-grpc/dist/grpc/solana-storage";
 
 const PING_INTERVAL_MS = 30000;
-const WALLET_ADRESSES = [
-  "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
-  "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
-];
+const WALLET_ADRESSES = ["BNgbVmeQ2PejSBVa4mu8uixwRJhQwSYoFyunXr7tX5Gy"];
 
 async function main() {
   const args = parseCommandLineArgs() as any;
@@ -134,12 +131,13 @@ async function subscribeCommand(client: any, args: any) {
               ...item,
               uiTokenAmount: {
                 ...item.uiTokenAmount,
-                uiAmount:
+                uiAmount: Math.abs(
                   item.uiTokenAmount.uiAmount +
-                  Number(data.transaction.transaction.meta.fee) / 1e9,
-                amount: (
+                    Number(data.transaction.transaction.meta.fee) / 1e9
+                ),
+                amount: Math.abs(
                   Number(item.uiTokenAmount.amount) +
-                  Number(data.transaction.transaction.meta.fee)
+                    Number(data.transaction.transaction.meta.fee)
                 ).toString(),
               },
             });
@@ -185,9 +183,6 @@ async function subscribeCommand(client: any, args: any) {
         });
         //if theres only 1 pre and 1 post balance, you must have swapped SOL and another token
         if (preBalances.length + postBalances.length === 2) {
-          console.log("prebalances", preBalances);
-          console.log("postbalances", postBalances);
-
           if (preBalances[0].mint === postBalances[0].mint) {
             const solValueWithFee =
               Number(data.transaction.transaction.meta.preBalances[0]) -
@@ -201,11 +196,12 @@ async function subscribeCommand(client: any, args: any) {
               Number(data.transaction.transaction.meta.postBalances[0]) / 1e9
             );
 
-            let uiAmount =
-              postBalances[0].uiTokenAmount.uiAmount -
-              preBalances[0].uiTokenAmount.uiAmount;
-
             let decimals = postBalances[0].uiTokenAmount.decimals;
+
+            let uiAmount =
+              (Number(postBalances[0].uiTokenAmount.amount) -
+                Number(preBalances[0].uiTokenAmount.amount)) /
+              10 ** decimals;
 
             let amount =
               Number(postBalances[0].uiTokenAmount.amount) -
@@ -215,8 +211,8 @@ async function subscribeCommand(client: any, args: any) {
               return;
             }
 
-            const multiplier = 1 / uiAmount;
-            const currentPrice = solAmountTransacted * multiplier;
+            const tokenPriceMultiplier = 1 / uiAmount;
+            const currentPrice = solAmountTransacted * tokenPriceMultiplier;
 
             finalBalances.push({
               mint: postBalances[0].mint,
@@ -266,8 +262,9 @@ async function subscribeCommand(client: any, args: any) {
                 mint: postBalance.mint,
                 uiTokenAmount: {
                   uiAmount:
-                    Number(postBalance.uiTokenAmount.uiAmount) -
-                    Number(preBalance.uiTokenAmount.uiAmount),
+                    (Number(postBalance.uiTokenAmount.amount) -
+                      Number(preBalance.uiTokenAmount.amount)) /
+                    10 ** postBalance.uiTokenAmount.decimals,
                   decimals: postBalance.uiTokenAmount.decimals,
                   amount: (
                     Number(postBalance.uiTokenAmount.amount) -
@@ -279,12 +276,20 @@ async function subscribeCommand(client: any, args: any) {
           });
           finalBalances.forEach((item) => {
             if (item.uiTokenAmount.uiAmount < 0) {
-              sender.push(item);
+              sender.push({
+                ...item,
+                uiTokenAmount: {
+                  ...item.uiTokenAmount,
+                  uiAmount: Math.abs(item.uiTokenAmount.uiAmount),
+                  amount: Math.abs(
+                    Number(item.uiTokenAmount.amount)
+                  ).toString(),
+                },
+              });
             } else if (item.uiTokenAmount.uiAmount > 0) {
               receiver.push(item);
             }
           });
-          // console.log("final", finalBalances);
           console.log("sender info:", sender);
           if (
             sender.filter((item) => WALLET_ADRESSES.includes(item.owner))
