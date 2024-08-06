@@ -188,13 +188,15 @@ async function subscribeCommand(client: any, args: any) {
               Number(data.transaction.transaction.meta.preBalances[0]) -
               Number(data.transaction.transaction.meta.postBalances[0]);
             const solAmountTransacted =
-              (solValueWithFee -
-                Number(data.transaction.transaction.meta.fee)) /
-              1e9;
+              Math.abs(
+                solValueWithFee - Number(data.transaction.transaction.meta.fee)
+              ) / 1e9;
             console.log(
               "users SOL amount remaining:",
               Number(data.transaction.transaction.meta.postBalances[0]) / 1e9
             );
+
+            console.log("sol amount in transaction", solAmountTransacted);
 
             let decimals = postBalances[0].uiTokenAmount.decimals;
 
@@ -225,9 +227,12 @@ async function subscribeCommand(client: any, args: any) {
                 price: currentPrice,
               },
             });
+            console.log("final balances", finalBalances);
+            finalBalances[0].type === "Buy"
+              ? console.log("Sol amount spent: ", solAmountTransacted)
+              : console.log("Sol amount gained: ", solAmountTransacted);
+            return;
           }
-          console.log("final balances", finalBalances);
-          return;
         }
       }
 
