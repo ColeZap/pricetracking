@@ -9,7 +9,11 @@ import bs58 from "bs58";
 import { UiTokenAmount } from "@triton-one/yellowstone-grpc/dist/grpc/solana-storage";
 
 const PING_INTERVAL_MS = 30000;
-const WALLET_ADRESSES = ["BNgbVmeQ2PejSBVa4mu8uixwRJhQwSYoFyunXr7tX5Gy"];
+const WALLET_ADRESSES = [
+  "9Xtau7TsJMTB5jVnF4frH3UH3LsXDbGSP6eKfRicMhUn",
+  "2H9xCZ6KyV3WeEhDaEr62JZNKBVxoe6wmDQnVtNppump",
+  "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+];
 
 async function main() {
   const args = parseCommandLineArgs() as any;
@@ -94,12 +98,30 @@ async function subscribeCommand(client: any, args: any) {
     const sender = [];
     const receiver = [];
 
+    console.log("data", data);
+
     if (data.transaction) {
+      if (
+        !data.transaction.transaction.meta.logMessages.includes(
+          "Program log: Instruction: Swap"
+        )
+      ) {
+        return;
+      }
+      const keys = [];
+
+      // data.transaction.transaction.transaction.message.accountKeys.forEach(
+      //   (key) => {
+      //     keys.push(bs58.encode(key));
+      //   }
+      // );
+      // if (!keys.includes(WALLET_ADRESSES)) {
+      //   return;
+      // }
       console.log(
         "signature",
         bs58.encode(data.transaction.transaction.signature)
       );
-
       if (
         data.transaction.transaction.meta.preTokenBalances.length === 0 &&
         data.transaction.transaction.meta.postTokenBalances.length === 0
@@ -315,13 +337,21 @@ async function subscribeCommand(client: any, args: any) {
 
   // Create subscribe request based on provided arguments.
   const request: SubscribeRequest = {
-    accounts: {},
+    accounts: {
+      // myAccountFilter: {
+      //   account: ["BNgbVmeQ2PejSBVa4mu8uixwRJhQwSYoFyunXr7tX5Gy"],
+      //   owner: ["BNgbVmeQ2PejSBVa4mu8uixwRJhQwSYoFyunXr7tX5Gy"],
+      //   filters: [],
+      // },
+    },
     slots: {},
     transactions: {
       myTransactionFilter: {
-        accountInclude: WALLET_ADRESSES,
+        accountInclude: [...WALLET_ADRESSES],
         accountExclude: [],
         accountRequired: [],
+        // signature:
+        //   "5TETboxB43jAGGLUSHSjXtJA27uzRJYFbCHh6b8rWFfpLT56rAmUvCL6cAkBprWiEQNTmGSYV6mGCawriUst6Kqk",
         vote: false,
         failed: false,
       },
