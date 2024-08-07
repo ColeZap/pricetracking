@@ -6,13 +6,27 @@ import Client, {
 } from "@triton-one/yellowstone-grpc";
 
 import bs58 from "bs58";
-import { UiTokenAmount } from "@triton-one/yellowstone-grpc/dist/grpc/solana-storage";
+
+interface TokenBalance {
+  owner: string;
+  mint: string;
+  uiTokenAmount: {
+    uiAmount: number;
+    decimals: number;
+    amount: string;
+  };
+}
 
 const PING_INTERVAL_MS = 30000;
 const WALLET_ADRESSES = [
-  "9Xtau7TsJMTB5jVnF4frH3UH3LsXDbGSP6eKfRicMhUn",
-  "2H9xCZ6KyV3WeEhDaEr62JZNKBVxoe6wmDQnVtNppump",
-  "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+  // "9Xtau7TsJMTB5jVnF4frH3UH3LsXDbGSP6eKfRicMhUn",
+  // "2H9xCZ6KyV3WeEhDaEr62JZNKBVxoe6wmDQnVtNppump",
+  // "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  // "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",
+  "AH6gaL1XpECU1weorV8uagCVM7pDjpeHDEjwZtwSRnKr",
+  "CorNCLUVKkAorVAtNWS9xZU7NQtawjgwLCHookgBQfow",
+  "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",
 ];
 
 async function main() {
@@ -90,248 +104,183 @@ async function subscribeCommand(client: any, args: any) {
     });
   });
 
+  const updatePrice = (price: number) => {
+    console.log("wrapped dog price:", price);
+  };
+
   // Handle updates
   stream.on("data", (data) => {
-    const preBalances = [];
-    const postBalances = [];
-    const finalBalances = [];
-    const sender = [];
-    const receiver = [];
-
-    console.log("data", data);
-
     if (data.transaction) {
-      if (
-        !data.transaction.transaction.meta.logMessages.includes(
-          "Program log: Instruction: Swap"
-        )
-      ) {
-        return;
-      }
-      const keys = [];
-
-      // data.transaction.transaction.transaction.message.accountKeys.forEach(
-      //   (key) => {
-      //     keys.push(bs58.encode(key));
-      //   }
-      // );
-      // if (!keys.includes(WALLET_ADRESSES)) {
-      //   return;
-      // }
       console.log(
         "signature",
         bs58.encode(data.transaction.transaction.signature)
       );
-      if (
-        data.transaction.transaction.meta.preTokenBalances.length === 0 &&
-        data.transaction.transaction.meta.postTokenBalances.length === 0
-      ) {
-        console.log("sending or receiving SOL");
+      // console.log(data.transaction.transaction.meta.logMessages);
 
-        data.transaction.transaction.transaction.message.accountKeys.forEach(
-          (key, i) => {
-            finalBalances.push({
-              mint: "So11111111111111111111111111111111111111112",
-              owner: bs58.encode(key),
-              uiTokenAmount: {
-                uiAmount:
-                  (Number(data.transaction.transaction.meta.postBalances[i]) -
-                    Number(data.transaction.transaction.meta.preBalances[i])) /
-                  1e9,
-                decimals: 9,
-                amount: (
-                  Number(data.transaction.transaction.meta.postBalances[i]) -
-                  Number(data.transaction.transaction.meta.preBalances[i])
-                ).toString(),
-              },
-            });
+      const tokens = [];
+      // data.transaction.transaction.meta.preTokenBalances.forEach(
+      //   (item: TokenBalance) => {
+      //     if (item.mint === "C9FTn7hQddPTmZQxvygBk2LVGwWriBvRGU4x2UEkpump") {
+      //       tokens.push(item);
+      //     }
+      //   }
+      // );
+      // if (tokens.length === 0) return;
+
+      const RADIUM_ADDRESS = ["5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"];
+      const preDexBalances: TokenBalance[] = [];
+      const postDexBalances: TokenBalance[] = [];
+      const finalDexBalances: TokenBalance[] = [];
+      let tokenTraded = "";
+
+      data.transaction.transaction.meta.preTokenBalances.forEach(
+        (item: TokenBalance) => {
+          if (RADIUM_ADDRESS.includes(item.owner)) {
+            preDexBalances.push(item);
           }
+        }
+      );
+      data.transaction.transaction.meta.postTokenBalances.forEach(
+        (item: TokenBalance) => {
+          if (RADIUM_ADDRESS.includes(item.owner)) {
+            postDexBalances.push(item);
+            if (item.mint != "So11111111111111111111111111111111111111112") {
+              tokenTraded = item.mint;
+            }
+          }
+        }
+      );
+      if (preDexBalances.length === 0 || postDexBalances.length === 0) return;
+
+      postDexBalances.forEach((postBalance) => {
+        let preBalance = preDexBalances.find(
+          (item) =>
+            item.mint === postBalance.mint && item.owner === postBalance.owner
         );
-        finalBalances.forEach((item) => {
-          if (item.uiTokenAmount.uiAmount < 0) {
-            sender.push({
-              ...item,
-              uiTokenAmount: {
-                ...item.uiTokenAmount,
-                uiAmount: Math.abs(
-                  item.uiTokenAmount.uiAmount +
-                    Number(data.transaction.transaction.meta.fee) / 1e9
-                ),
-                amount: Math.abs(
-                  Number(item.uiTokenAmount.amount) +
-                    Number(data.transaction.transaction.meta.fee)
-                ).toString(),
-              },
-            });
-          } else if (item.uiTokenAmount.uiAmount > 0) {
-            receiver.push(item);
-          }
-        });
-
-        console.log("sender info:", sender);
-        if (
-          sender.filter((item) => WALLET_ADRESSES.includes(item.owner))
-            .length === 0
-        ) {
-          console.log(
-            "receiver info:",
-            receiver.filter((item) => WALLET_ADRESSES.includes(item.owner))
-          );
-        } else {
-          console.log("receiver info", receiver);
+        if (preBalance) {
+          finalDexBalances.push({
+            owner: postBalance.owner,
+            mint: postBalance.mint,
+            uiTokenAmount: {
+              uiAmount:
+                (Number(postBalance.uiTokenAmount.amount) -
+                  Number(preBalance.uiTokenAmount.amount)) /
+                10 ** postBalance.uiTokenAmount.decimals,
+              decimals: postBalance.uiTokenAmount.decimals,
+              amount: (
+                Number(postBalance.uiTokenAmount.amount) -
+                Number(preBalance.uiTokenAmount.amount)
+              ).toString(),
+            },
+          });
         }
+      });
 
-        return;
+      const tradedToken = finalDexBalances.filter(
+        (token) => token.mint !== "So11111111111111111111111111111111111111112"
+      );
+      const solInTransaction = finalDexBalances.filter(
+        (token) => token.mint === "So11111111111111111111111111111111111111112"
+      );
+
+      if (tradedToken.length === 0 || solInTransaction.length === 0) return;
+      // console.log("traded Token", tradedToken);
+      // console.log("sol in trans", solInTransaction);
+
+      const priceMultiplier =
+        1 / Math.abs(tradedToken[0].uiTokenAmount.uiAmount);
+
+      const result = {
+        mint: tradedToken[0].mint,
+        price: Math.abs(
+          solInTransaction[0].uiTokenAmount.uiAmount * priceMultiplier
+        ),
+      };
+
+      if (!result.price) return;
+
+      console.log("result", result);
+      if (result.mint === "GYKmdfcUmZVrqfcH1g579BGjuzSRijj3LBuwv79rpump") {
+        updatePrice(result.price);
       }
 
-      if (
-        data.transaction.transaction.meta.logMessages.includes(
-          "Program log: Instruction: Swap"
-        )
-      ) {
-        let signerWallet = bs58.encode(
-          data.transaction.transaction.transaction.message.accountKeys[0]
-        );
+      //if theres only 1 pre and 1 post balance, you must have swapped SOL and another token
+      // postBalances.forEach((postBalance) => {
+      //   let preBalance = preBalances.find(
+      //     (item) =>
+      //       item.owner === postBalance.owner && item.mint === postBalance.mint
+      //   );
+      //   if (preBalance) {
+      //     finalBalances.push({
+      //       owner: postBalance.owner,
+      //       mint: postBalance.mint,
+      //       uiTokenAmount: {
+      //         uiAmount:
+      //           (Number(postBalance.uiTokenAmount.amount) -
+      //             Number(preBalance.uiTokenAmount.amount)) /
+      //           10 ** postBalance.uiTokenAmount.decimals,
+      //         decimals: postBalance.uiTokenAmount.decimals,
+      //         amount: (
+      //           Number(postBalance.uiTokenAmount.amount) -
+      //           Number(preBalance.uiTokenAmount.amount)
+      //         ).toString(),
+      //       },
+      //     });
+      //   }
+      // });
+      // console.log("finalBalances", finalBalances);
+      // if (preBalances.length + postBalances.length === 2) {
+      //   if (preBalances[0].mint === postBalances[0].mint) {
+      //     const solValueWithFee =
+      //       Number(data.transaction.transaction.meta.preBalances[0]) -
+      //       Number(data.transaction.transaction.meta.postBalances[0]);
+      //     const solAmountTransacted =
+      //       Math.abs(
+      //         solValueWithFee - Number(data.transaction.transaction.meta.fee)
+      //       ) / 1e9;
+      //     console.log(
+      //       "users SOL amount remaining:",
+      //       Number(data.transaction.transaction.meta.postBalances[0]) / 1e9
+      //     );
 
-        data.transaction.transaction.meta.preTokenBalances.forEach((item) => {
-          if (item.owner === signerWallet) {
-            preBalances.push(item);
-          }
-        });
-        data.transaction.transaction.meta.postTokenBalances.forEach((item) => {
-          if (item.owner === signerWallet) {
-            postBalances.push(item);
-          }
-        });
-        //if theres only 1 pre and 1 post balance, you must have swapped SOL and another token
-        if (preBalances.length + postBalances.length === 2) {
-          if (preBalances[0].mint === postBalances[0].mint) {
-            const solValueWithFee =
-              Number(data.transaction.transaction.meta.preBalances[0]) -
-              Number(data.transaction.transaction.meta.postBalances[0]);
-            const solAmountTransacted =
-              Math.abs(
-                solValueWithFee - Number(data.transaction.transaction.meta.fee)
-              ) / 1e9;
-            console.log(
-              "users SOL amount remaining:",
-              Number(data.transaction.transaction.meta.postBalances[0]) / 1e9
-            );
+      //     console.log("sol amount in transaction", solAmountTransacted);
 
-            console.log("sol amount in transaction", solAmountTransacted);
+      //     let decimals = postBalances[0].uiTokenAmount.decimals;
 
-            let decimals = postBalances[0].uiTokenAmount.decimals;
+      //     let uiAmount =
+      //       (Number(postBalances[0].uiTokenAmount.amount) -
+      //         Number(preBalances[0].uiTokenAmount.amount)) /
+      //       10 ** decimals;
 
-            let uiAmount =
-              (Number(postBalances[0].uiTokenAmount.amount) -
-                Number(preBalances[0].uiTokenAmount.amount)) /
-              10 ** decimals;
+      //     let amount =
+      //       Number(postBalances[0].uiTokenAmount.amount) -
+      //       Number(preBalances[0].uiTokenAmount.amount);
 
-            let amount =
-              Number(postBalances[0].uiTokenAmount.amount) -
-              Number(preBalances[0].uiTokenAmount.amount);
+      //     if (uiAmount === 0) {
+      //       return;
+      //     }
 
-            if (uiAmount === 0) {
-              return;
-            }
+      //     const tokenPriceMultiplier = 1 / uiAmount;
+      //     const currentPrice = solAmountTransacted * tokenPriceMultiplier;
 
-            const tokenPriceMultiplier = 1 / uiAmount;
-            const currentPrice = solAmountTransacted * tokenPriceMultiplier;
-
-            finalBalances.push({
-              mint: postBalances[0].mint,
-              owner: signerWallet,
-              type: amount > 0 ? "Buy" : "Sell",
-              uiTokenAmount: {
-                uiAmount: Math.abs(uiAmount),
-                decimals,
-                amount: Math.abs(amount).toString(),
-                price: currentPrice,
-              },
-            });
-            console.log("final balances", finalBalances);
-            finalBalances[0].type === "Buy"
-              ? console.log("Sol amount spent: ", solAmountTransacted)
-              : console.log("Sol amount gained: ", solAmountTransacted);
-            return;
-          }
-        }
-      }
-
-      if (
-        !data.transaction.transaction.meta.logMessages.includes(
-          "Program log: Instruction: Swap"
-        )
-      ) {
-        if (
-          data.transaction.transaction.meta.preTokenBalances.length +
-            data.transaction.transaction.meta.postTokenBalances.length >
-          2
-        ) {
-          console.log("sending or receiving a token other than SOL");
-          data.transaction.transaction.meta.preTokenBalances.forEach((item) => {
-            preBalances.push(item);
-          });
-          data.transaction.transaction.meta.postTokenBalances.forEach(
-            (item) => {
-              postBalances.push(item);
-            }
-          );
-          postBalances.forEach((postBalance) => {
-            let preBalance = preBalances.find(
-              (item) =>
-                item.owner === postBalance.owner &&
-                item.mint === postBalance.mint
-            );
-            if (preBalance) {
-              finalBalances.push({
-                owner: postBalance.owner,
-                mint: postBalance.mint,
-                uiTokenAmount: {
-                  uiAmount:
-                    (Number(postBalance.uiTokenAmount.amount) -
-                      Number(preBalance.uiTokenAmount.amount)) /
-                    10 ** postBalance.uiTokenAmount.decimals,
-                  decimals: postBalance.uiTokenAmount.decimals,
-                  amount: (
-                    Number(postBalance.uiTokenAmount.amount) -
-                    Number(preBalance.uiTokenAmount.amount)
-                  ).toString(),
-                },
-              });
-            }
-          });
-          finalBalances.forEach((item) => {
-            if (item.uiTokenAmount.uiAmount < 0) {
-              sender.push({
-                ...item,
-                uiTokenAmount: {
-                  ...item.uiTokenAmount,
-                  uiAmount: Math.abs(item.uiTokenAmount.uiAmount),
-                  amount: Math.abs(
-                    Number(item.uiTokenAmount.amount)
-                  ).toString(),
-                },
-              });
-            } else if (item.uiTokenAmount.uiAmount > 0) {
-              receiver.push(item);
-            }
-          });
-          console.log("sender info:", sender);
-          if (
-            sender.filter((item) => WALLET_ADRESSES.includes(item.owner))
-              .length === 0
-          ) {
-            console.log(
-              "receiver info:",
-              receiver.filter((item) => WALLET_ADRESSES.includes(item.owner))
-            );
-          } else {
-            console.log("receiver info", receiver);
-          }
-          return;
-        }
-      }
+      //     finalBalances.push({
+      //       mint: postBalances[0].mint,
+      //       owner: signerWallet,
+      //       type: amount > 0 ? "Buy" : "Sell",
+      //       uiTokenAmount: {
+      //         uiAmount: Math.abs(uiAmount),
+      //         decimals,
+      //         amount: Math.abs(amount).toString(),
+      //         price: currentPrice,
+      //       },
+      //     });
+      //     console.log("final balances", finalBalances);
+      //     finalBalances[0].type === "Buy"
+      //       ? console.log("Sol amount spent: ", solAmountTransacted)
+      //       : console.log("Sol amount gained: ", solAmountTransacted);
+      //     return;
+      //   }
+      // }
     }
   });
 
