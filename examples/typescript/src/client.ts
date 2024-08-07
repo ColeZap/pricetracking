@@ -88,6 +88,7 @@ function parseCommitmentLevel(commitment: string | undefined) {
 
 async function subscribeCommand(client: any, args: any) {
   // Subscribe for events
+
   const stream = await client.subscribe();
 
   // Create `error` / `end` handler
@@ -104,34 +105,46 @@ async function subscribeCommand(client: any, args: any) {
     });
   });
 
-  const updatePrice = (price: number) => {
+  const updatePrice = async (mint: string, price: number) => {
+    try {
+      const response = await fetch("http://localhost:3000/api/tokenPrice", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mint, price }),
+      });
+      console.log(response);
+    } catch (error) {
+      console.log("error", error);
+    }
+
     console.log("wrapped dog price:", price);
   };
 
   // Handle updates
   stream.on("data", (data) => {
     if (data.transaction) {
+      // console.log(data.transaction.transaction.meta.logMessages);
+
+      const tokens = [];
+      data.transaction.transaction.meta.preTokenBalances.forEach(
+        (item: TokenBalance) => {
+          if (item.mint === "4HT1b2ysGXdyD5vxemDKq25G2sj3xeh2SvE6XMhNpump") {
+            tokens.push(item);
+          }
+        }
+      );
+      if (tokens.length === 0) return;
       console.log(
         "signature",
         bs58.encode(data.transaction.transaction.signature)
       );
-      // console.log(data.transaction.transaction.meta.logMessages);
-
-      const tokens = [];
-      // data.transaction.transaction.meta.preTokenBalances.forEach(
-      //   (item: TokenBalance) => {
-      //     if (item.mint === "C9FTn7hQddPTmZQxvygBk2LVGwWriBvRGU4x2UEkpump") {
-      //       tokens.push(item);
-      //     }
-      //   }
-      // );
-      // if (tokens.length === 0) return;
 
       const RADIUM_ADDRESS = ["5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"];
       const preDexBalances: TokenBalance[] = [];
       const postDexBalances: TokenBalance[] = [];
       const finalDexBalances: TokenBalance[] = [];
-      let tokenTraded = "";
 
       data.transaction.transaction.meta.preTokenBalances.forEach(
         (item: TokenBalance) => {
@@ -144,9 +157,6 @@ async function subscribeCommand(client: any, args: any) {
         (item: TokenBalance) => {
           if (RADIUM_ADDRESS.includes(item.owner)) {
             postDexBalances.push(item);
-            if (item.mint != "So11111111111111111111111111111111111111112") {
-              tokenTraded = item.mint;
-            }
           }
         }
       );
@@ -190,96 +200,20 @@ async function subscribeCommand(client: any, args: any) {
       const priceMultiplier =
         1 / Math.abs(tradedToken[0].uiTokenAmount.uiAmount);
 
+      const solPrice = Math.abs(
+        solInTransaction[0].uiTokenAmount.uiAmount * priceMultiplier
+      );
+
       const result = {
         mint: tradedToken[0].mint,
-        price: Math.abs(
-          solInTransaction[0].uiTokenAmount.uiAmount * priceMultiplier
-        ),
+        price: solPrice,
       };
 
       if (!result.price) return;
 
       console.log("result", result);
-      if (result.mint === "GYKmdfcUmZVrqfcH1g579BGjuzSRijj3LBuwv79rpump") {
-        updatePrice(result.price);
-      }
-
-      //if theres only 1 pre and 1 post balance, you must have swapped SOL and another token
-      // postBalances.forEach((postBalance) => {
-      //   let preBalance = preBalances.find(
-      //     (item) =>
-      //       item.owner === postBalance.owner && item.mint === postBalance.mint
-      //   );
-      //   if (preBalance) {
-      //     finalBalances.push({
-      //       owner: postBalance.owner,
-      //       mint: postBalance.mint,
-      //       uiTokenAmount: {
-      //         uiAmount:
-      //           (Number(postBalance.uiTokenAmount.amount) -
-      //             Number(preBalance.uiTokenAmount.amount)) /
-      //           10 ** postBalance.uiTokenAmount.decimals,
-      //         decimals: postBalance.uiTokenAmount.decimals,
-      //         amount: (
-      //           Number(postBalance.uiTokenAmount.amount) -
-      //           Number(preBalance.uiTokenAmount.amount)
-      //         ).toString(),
-      //       },
-      //     });
-      //   }
-      // });
-      // console.log("finalBalances", finalBalances);
-      // if (preBalances.length + postBalances.length === 2) {
-      //   if (preBalances[0].mint === postBalances[0].mint) {
-      //     const solValueWithFee =
-      //       Number(data.transaction.transaction.meta.preBalances[0]) -
-      //       Number(data.transaction.transaction.meta.postBalances[0]);
-      //     const solAmountTransacted =
-      //       Math.abs(
-      //         solValueWithFee - Number(data.transaction.transaction.meta.fee)
-      //       ) / 1e9;
-      //     console.log(
-      //       "users SOL amount remaining:",
-      //       Number(data.transaction.transaction.meta.postBalances[0]) / 1e9
-      //     );
-
-      //     console.log("sol amount in transaction", solAmountTransacted);
-
-      //     let decimals = postBalances[0].uiTokenAmount.decimals;
-
-      //     let uiAmount =
-      //       (Number(postBalances[0].uiTokenAmount.amount) -
-      //         Number(preBalances[0].uiTokenAmount.amount)) /
-      //       10 ** decimals;
-
-      //     let amount =
-      //       Number(postBalances[0].uiTokenAmount.amount) -
-      //       Number(preBalances[0].uiTokenAmount.amount);
-
-      //     if (uiAmount === 0) {
-      //       return;
-      //     }
-
-      //     const tokenPriceMultiplier = 1 / uiAmount;
-      //     const currentPrice = solAmountTransacted * tokenPriceMultiplier;
-
-      //     finalBalances.push({
-      //       mint: postBalances[0].mint,
-      //       owner: signerWallet,
-      //       type: amount > 0 ? "Buy" : "Sell",
-      //       uiTokenAmount: {
-      //         uiAmount: Math.abs(uiAmount),
-      //         decimals,
-      //         amount: Math.abs(amount).toString(),
-      //         price: currentPrice,
-      //       },
-      //     });
-      //     console.log("final balances", finalBalances);
-      //     finalBalances[0].type === "Buy"
-      //       ? console.log("Sol amount spent: ", solAmountTransacted)
-      //       : console.log("Sol amount gained: ", solAmountTransacted);
-      //     return;
-      //   }
+      // if (result.mint === "4HT1b2ysGXdyD5vxemDKq25G2sj3xeh2SvE6XMhNpump") {
+      //   updatePrice(result.mint, result.price);
       // }
     }
   });
